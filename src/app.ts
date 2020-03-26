@@ -5,8 +5,7 @@ import express from 'express'
 import Joi from '@hapi/joi'
 
 import api from './api'
-import { IReservations } from './api/reservations'
-import { ITimetables } from './api/timetables'
+import schema from './middlewares/schema.middleware'
 
 const app = express()
 
@@ -16,74 +15,18 @@ interface IAvailableGet {
   hour: number
 }
 
-const schema = Joi.object({
+const schema_available_get = Joi.object({
   id: Joi.string().required(),
   date: Joi.string().required().pattern(/^\d{4}-\d{2}-\d{2}$/),
   hour: Joi.number(),
 })
 
-function reservation_is_available(reservations: IReservations, timetables: ITimetables, hour: number) {
-  if (reservations.error) {
-    throw new Error(reservations.error)
-  } else if (!reservations.reservations) {
-    throw new Error('An error occured.')
-  }
-
-  if (timetables.error) {
-    throw new Error(timetables.error)
-  } else if (!timetables.timetables) {
-    throw new Error('An error occured.')
-  }
-
-  let available = false
-
-  if (timetables.open) {
-    const sanitized_timetables = timetables.timetables.map(timetable => {
-      const [, opening] = timetable.opening.split(' ')
-      const [, closing] = timetable.closing.split(' ')
-
-      return {
-        opening: +opening.split(':')[0],
-        closing: +closing.split(':')[0],
-      }
-    })
-
-    for (const timetable of sanitized_timetables) {
-      if (hour >= timetable.opening && hour < timetable.closing) {
-        available = true
-        break;
-      }
-    }
-
-    const sanitized_reservations = reservations.reservations.map(reservation => {
-      const [, reservationStart] = reservation.reservationStart.split(' ')
-      const [, reservationEnd] = reservation.reservationEnd.split(' ')
-
-      return {
-        reservationStart: +reservationStart.split(':')[0],
-        reservationEnd: +reservationEnd.split(':')[0],
-      }
-    })
-
-    for (const timetable of sanitized_reservations) {
-      if (hour >= timetable.reservationStart && hour < timetable.reservationEnd) {
-        available = false
-      }
-    }
-  }
-
-  return available
-}
-
-app.get('/available', async (req, res) => {
+app.get('/available', schema({ query: schema_available_get, }), async (req, res) => {
   try {
-    const query: IAvailableGet = await schema.validateAsync(req.query)
-
-    const reservations = await api.reservations.get(query.date, query.id)
-    const timetables = await api.timetables.get(query.date, query.id)
+    const query = req.query as IAvailableGet
 
     res.json({
-      available: reservation_is_available(reservations, timetables, query.hour),
+      available: await api.reservations.is_available(query.id, query.date, query.hour),
     })
   } catch (e) {
     if ('details' in e) {
